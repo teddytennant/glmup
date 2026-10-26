@@ -66,12 +66,24 @@ run() {
 }
 export OPENAI_API_KEY=$KEY
 
+# cheapest and most important first: a job's hour can run out partway through
 echo "== decode, 1 stream (1k in / 512 out)"
 run --random-input-len 1024 --random-output-len 512 --num-prompts 3 --max-concurrency 1
-for c in 8 32 128; do
+for c in 8 32 64; do
   echo "== decode, $c streams (1k in / 512 out)"
   run --random-input-len 1024 --random-output-len 512 --num-prompts $c --max-concurrency $c
 done
+
+echo "== needle in a haystack (reasoning effort low)"
+python -m glmup_sglang.needle "$URL" "$KEY" "$NAME" "$GLMUP_ROOT/models/sglang" 131072:0.1,0.5,0.9 524288:0.5
+
+if [ -f "$GLMUP_ROOT/data/mmlu-pro-280.jsonl" ]; then
+  echo "== mmlu-pro (280 questions, 20 per subject, thinking on, ${GLMUP_MMLU_DEADLINE:-480}s deadline)"
+  python -m glmup_sglang.mmlu_pro --url "$URL" --key "$KEY" --model "$NAME" --data "$GLMUP_ROOT/data/mmlu-pro-280.jsonl" --deadline "${GLMUP_MMLU_DEADLINE:-480}"
+fi
+
+echo "== decode, 128 streams (1k in / 512 out)"
+run --random-input-len 1024 --random-output-len 512 --num-prompts 128 --max-concurrency 128
 echo "== prefill (8k in / 1 out, 8 at a time)"
 run --random-input-len 8192 --random-output-len 1 --num-prompts 32 --max-concurrency 8
 echo "== long prefill (64k in / 64 out, 1 at a time)"
