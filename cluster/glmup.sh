@@ -80,7 +80,7 @@ setup() {
   if [ ! -s "$STATE/api_key" ]; then
     (umask 077; printf 'sk-glmup-%s\n' "$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')" > "$STATE/api_key")
   fi
-  say "setup done. start it with: $SRC/cluster/glmup.sh up"
+  say "setup done. start it with: bash $GLMUP_ROOT/src/cluster/glmup.sh up"
 }
 
 up() {
