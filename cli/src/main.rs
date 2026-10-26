@@ -1,5 +1,6 @@
 mod chat;
 mod config;
+mod keep;
 mod remote;
 mod tunnel;
 mod wizard;
@@ -66,6 +67,15 @@ enum Cmd {
     },
     /// Point wizard's provider at the tunnel with the current key
     Wizard,
+    /// Keep a job running back to back and relay requests through the reloads
+    Keep {
+        /// Relay listen addresses (the docker bridge lets containers reach it)
+        #[arg(long, value_delimiter = ',', default_value = "127.0.0.1:30001,172.17.0.1:30001")]
+        bind: Vec<String>,
+        /// Longest a request waits for a server before it gets a 503
+        #[arg(long, default_value_t = 90)]
+        hold_mins: u64,
+    },
     /// Chat with the model in the terminal (waits for the server if it is still starting)
     Chat,
 }
@@ -114,6 +124,9 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Cmd::Chat => chat::run(&remote),
+        Cmd::Keep { bind, hold_mins } => {
+            keep::run(&remote, &bind, Duration::from_secs(hold_mins * 60), &[("GLMUP_CPUS_PER_GPU", "6"), ("GLMUP_MEM", "120G")])
+        }
         Cmd::Wizard => {
             let s = remote.status()?;
             let path = wizard::configure(&cfg, &s.api_key)?;

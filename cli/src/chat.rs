@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::remote::Remote;
 use crate::tunnel;
 
-const HELP: &str = "/new clears the conversation · /think toggles reasoning · /system <text> sets a system prompt · /exit";
+const HELP: &str = "/new clears the conversation · /effort max|high|low sets how hard it thinks · /system <text> sets a system prompt · /exit";
 
 pub fn run(remote: &Remote) -> Result<()> {
     let cfg = remote.cfg;
@@ -29,7 +29,8 @@ pub fn run(remote: &Remote) -> Result<()> {
     let _ = rl.load_history(&history);
     let mut messages: Vec<Value> = Vec::new();
     let mut system: Option<String> = None;
-    let mut think = true;
+    // GLM-5.3 always reasons; its chat template takes an effort instead of an on/off switch
+    let mut effort = "max".to_string();
 
     loop {
         println!();
@@ -55,9 +56,11 @@ pub fn run(remote: &Remote) -> Result<()> {
                 println!("{}", style("new conversation").dim());
                 continue;
             }
-            ("/think", _) => {
-                think = !think;
-                println!("{}", style(format!("reasoning {}", if think { "on" } else { "off" })).dim());
+            ("/effort", level) => {
+                if matches!(level, "max" | "high" | "low") {
+                    effort = level.to_string();
+                }
+                println!("{}", style(format!("reasoning effort {effort}")).dim());
                 continue;
             }
             ("/system", text) => {
@@ -76,7 +79,7 @@ pub fn run(remote: &Remote) -> Result<()> {
         }
         body.extend(messages.iter().cloned());
         stop.store(false, Ordering::SeqCst);
-        match stream(cfg, &key, body, think, &stop) {
+        match stream(cfg, &key, body, &effort, &stop) {
             Ok(reply) => messages.push(json!({"role": "assistant", "content": reply})),
             Err(e) => {
                 messages.pop();
@@ -116,13 +119,13 @@ fn wait_for_server(remote: &Remote) -> Result<String> {
     }
 }
 
-fn stream(cfg: &Config, key: &str, messages: Vec<Value>, think: bool, stop: &AtomicBool) -> Result<String> {
+fn stream(cfg: &Config, key: &str, messages: Vec<Value>, effort: &str, stop: &AtomicBool) -> Result<String> {
     let req = json!({
         "model": cfg.model,
         "messages": messages,
         "stream": true,
         "stream_options": {"include_usage": true},
-        "chat_template_kwargs": {"enable_thinking": think},
+        "chat_template_kwargs": {"reasoning_effort": effort},
     });
     let started = Instant::now();
     let resp = ureq::post(&format!("{}/chat/completions", cfg.local_url()))
