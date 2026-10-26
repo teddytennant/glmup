@@ -35,7 +35,7 @@ from sglang.srt.layers.quantization.unquant import UnquantizedLinearMethod
 from sglang.srt.utils import set_weight_attrs
 
 NAME = "glmup_gguf"
-VEC_MAX_TOKENS = int(os.environ.get("GLMUP_VEC_MAX_TOKENS", "32"))
+VEC_MAX_TOKENS = int(os.environ.get("GLMUP_VEC_MAX_TOKENS", "16"))
 
 
 def row_bytes(qtype: GGMLQuantizationType, cols: int) -> int:
@@ -58,6 +58,10 @@ def dequantize(rows: torch.Tensor, qtype: int, cols: int, dtype: torch.dtype, ou
     experts, n = rows.shape[0], rows.shape[1]
     if out is None:
         out = torch.empty(experts, n, cols, dtype=dtype, device=rows.device)
+    if qtype == GGMLQuantizationType.IQ3_XXS and rows.is_contiguous():
+        from .iq3_xxs import dequantize_iq3_xxs
+
+        return dequantize_iq3_xxs(rows, out)
     step = max(1, DEQUANT_ROWS // n)
     for i in range(0, experts, step):
         part = rows[i : i + step].reshape(-1, rows.shape[-1])

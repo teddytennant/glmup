@@ -61,6 +61,40 @@ def test_dequant_whole_tp_shard_of_a_layer(experts):
         torch.testing.assert_close(got[e].float().cpu(), reference(t, e)[:, 1024:], rtol=1e-2, atol=1e-3)
 
 
+def test_triton_iq3_xxs_matches_gguf_py(experts):
+    from glmup_sglang.iq3_xxs import dequantize_iq3_xxs
+
+    t = experts["gate"]
+    assert t.tensor_type.name == "IQ3_XXS"
+    rows = torch.from_numpy(np.ascontiguousarray(t.data[:3])).cuda()
+    got = dequantize_iq3_xxs(rows, torch.empty(3, 2048, 4096, device="cuda")).cpu()
+    for e in range(3):
+        torch.testing.assert_close(got[e], reference(t, e), rtol=0, atol=0)
+
+
+def test_triton_iq3_xxs_speed(experts):
+    """A whole TP shard of one layer (gate+up+down) must dequantize in well under 10 ms."""
+    from glmup_sglang.iq3_xxs import dequantize_iq3_xxs
+
+    w13 = torch.randint(0, 255, (288, 2048, 1568), dtype=torch.uint8, device="cuda")
+    w2 = torch.randint(0, 255, (288, 4096, 392), dtype=torch.uint8, device="cuda")
+    w2[..., 0:2] = 0  # keep fp16 scales finite
+    w13[..., 0:2] = 0
+    o13 = torch.empty(288, 2048, 4096, dtype=torch.bfloat16, device="cuda")
+    o2 = torch.empty(288, 4096, 1024, dtype=torch.bfloat16, device="cuda")
+    for _ in range(3):
+        dequantize_iq3_xxs(w13, o13), dequantize_iq3_xxs(w2, o2)
+    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    start.record()
+    for _ in range(10):
+        dequantize_iq3_xxs(w13, o13), dequantize_iq3_xxs(w2, o2)
+    end.record()
+    torch.cuda.synchronize()
+    ms = start.elapsed_time(end) / 10
+    print(f"IQ3_XXS dequant of one layer shard: {ms:.2f} ms")
+    assert ms < 10
+
+
 def test_vec_path_matches_reference(experts):
     from glmup_sglang.gguf_experts import GGUFExpertsMoEMethod
 
