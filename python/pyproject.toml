@@ -1,0 +1,20 @@
+[project]
+name = "glmup-sglang"
+version = "0.1.0"
+description = "Serve the GLM-5.3-Flash GGUF on sglang with its experts left in GGUF form"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["sglang==0.5.22", "gguf>=0.17"]
+
+[project.entry-points."sglang.srt.plugins"]
+glmup_gguf = "glmup_sglang:register"
+
+[project.scripts]
+glmup-convert = "glmup_sglang.convert:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["glmup_sglang"]
