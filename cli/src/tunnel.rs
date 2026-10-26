@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -35,14 +36,16 @@ pub fn ensure(remote: &Remote, ep: &Endpoint) -> Result<u32> {
     }
     let cfg = remote.cfg;
     let child = remote
-        .ssh_base()
-        .args(["-N", "-o", "ExitOnForwardFailure=yes", "-o", "ControlMaster=no"])
+        .ssh_base(false)
+        .args(["-N", "-o", "ExitOnForwardFailure=yes"])
         .arg("-L")
         .arg(format!("127.0.0.1:{}:{target}", cfg.local_port))
         .arg(&cfg.host)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        // own process group, so it outlives the shell that ran `glm up`
+        .process_group(0)
         .spawn()
         .context("starting ssh tunnel")?;
     let pid = child.id();
