@@ -42,6 +42,7 @@ glm off                      cancel the job, close the tunnel
 glm                          status: queue, job, GPU load and memory, running/queued requests, KV use
 glm creds [--json]           base URL, API key, model name, a curl to try
 glm logs [-f]                server log
+glm chat                     chat in the terminal: streamed, reasoning dimmed, /new /think /system
 glm tunnel [--stop]          the local port forward on its own
 glm wizard                   write the wizard provider and key
 glm -v ...                   print the ssh commands and raw status

@@ -1,3 +1,4 @@
+mod chat;
 mod config;
 mod remote;
 mod tunnel;
@@ -65,6 +66,8 @@ enum Cmd {
     },
     /// Point wizard's provider at the tunnel with the current key
     Wizard,
+    /// Chat with the model in the terminal (waits for the server if it is still starting)
+    Chat,
 }
 
 fn main() {
@@ -110,6 +113,7 @@ fn run(cli: Cli) -> Result<()> {
             println!("tunnel open: {} -> {}:{}", cfg.local_url(), ep.node, ep.port);
             Ok(())
         }
+        Cmd::Chat => chat::run(&remote),
         Cmd::Wizard => {
             let s = remote.status()?;
             let path = wizard::configure(&cfg, &s.api_key)?;
@@ -119,9 +123,9 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
-fn spinner() -> ProgressBar {
+pub(crate) fn spinner() -> ProgressBar {
     let pb = ProgressBar::new_spinner();
-    pb.set_style(ProgressStyle::with_template("{spinner:.cyan} {elapsed_precise:.dim} {msg}").unwrap());
+    pb.set_style(ProgressStyle::with_template("{spinner:.cyan} {elapsed_precise:.dim} {wide_msg}").unwrap());
     pb.enable_steady_tick(Duration::from_millis(100));
     pb
 }
