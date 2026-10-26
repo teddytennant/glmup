@@ -4,7 +4,7 @@ Everything outside the routed experts is plain bf16 and goes through
 sglang's unquantized paths. Each FusedMoE layer keeps its experts as raw
 GGUF rows (uint8 [experts, rows, row_bytes]) and picks one of two paths:
 
-* few tokens: ggml's MMVQ kernel reads the quantized rows directly, one
+* up to 64 tokens: ggml's MMVQ kernel reads the quantized rows directly, one
   matvec per (token, expert). This is the decode path.
 * many tokens: the layer's experts are dequantized to bf16 and handed to
   sglang's own triton MoE runner, so prefill gets a real grouped GEMM and
@@ -35,7 +35,7 @@ from sglang.srt.layers.quantization.unquant import UnquantizedLinearMethod
 from sglang.srt.utils import set_weight_attrs
 
 NAME = "glmup_gguf"
-VEC_MAX_TOKENS = int(os.environ.get("GLMUP_VEC_MAX_TOKENS", "16"))
+VEC_MAX_TOKENS = int(os.environ.get("GLMUP_VEC_MAX_TOKENS", "64"))
 
 
 def row_bytes(qtype: GGMLQuantizationType, cols: int) -> int:

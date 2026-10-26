@@ -95,7 +95,8 @@ def test_triton_iq3_xxs_speed(experts):
     assert ms < 10
 
 
-def test_vec_path_matches_reference(experts):
+@pytest.mark.parametrize("tokens", [4, 64])
+def test_vec_path_matches_reference(experts, tokens):
     from glmup_sglang.gguf_experts import GGUFExpertsMoEMethod
 
     torch.manual_seed(0)
@@ -110,7 +111,7 @@ def test_vec_path_matches_reference(experts):
     method.moe_runner_config = types.SimpleNamespace(swiglu_limit=10.0, routed_scaling_factor=2.5)
     layer = types.SimpleNamespace(w13_weight=w13, w2_weight=w2)
 
-    tokens, top_k = 4, 8
+    top_k = 8
     x = (torch.randn(tokens, 4096, device="cuda") * 0.5).bfloat16()
     ids = torch.stack([torch.randperm(16)[:top_k] for _ in range(tokens)]).int().cuda()
     weights = torch.softmax(torch.randn(tokens, top_k, device="cuda"), -1)
