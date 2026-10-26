@@ -20,7 +20,11 @@ export HF_HUB_OFFLINE=1 PYTHONUNBUFFERED=1
 # the newer compiler is fine, and every JIT kernel build goes through it.
 export NVCC_APPEND_FLAGS="-DCCCL_DISABLE_CTK_COMPATIBILITY_CHECK ${NVCC_APPEND_FLAGS:-}"
 # $HOME is NFS; ninja and the JIT cache lock files need a local disk.
-export SGLANG_JIT_CACHE_DIR=/tmp/glmup-jit-$USER TRITON_CACHE_DIR=/tmp/glmup-triton-$USER
+export SGLANG_JIT_CACHE_DIR=/tmp/glmup-jit-$USER
+# Triton writes its cache with atomic renames, so it can live on NFS and carry
+# compiled KDA kernels from one job to the next
+export TRITON_CACHE_DIR=$ROOT/cache/triton
+export SGLANG_TORCH_PROFILER_DIR=$ROOT/logs
 export TVM_FFI_CACHE_DIR=/tmp/glmup-tvm-$USER TILELANG_CACHE_DIR=/tmp/glmup-tilelang-$USER
 
 echo "node $(hostname) job $SLURM_JOB_ID port $PORT gpus ${CUDA_VISIBLE_DEVICES:-?}"
@@ -40,6 +44,8 @@ args=(
   --reasoning-parser auto --tool-call-parser auto
   --mem-fraction-static "${GLMUP_MEM_FRACTION:-0.85}"
   --enable-metrics --log-requests-level 0
+  # prefill graphs took 12.5 min to capture and buy little at 8k-token chunks
+  --disable-prefill-cuda-graph
 )
 [ -n "$CONTEXT" ] && args+=(--context-length "$CONTEXT")
 if [ "${GLMUP_MTP:-0}" = 1 ]; then
@@ -57,6 +63,8 @@ until curl -sf -o /dev/null -m 5 "http://127.0.0.1:$PORT/health"; do
   kill -0 $SERVER 2>/dev/null || { echo "== server exited during startup"; exit 1; }
   sleep 10
 done
+echo "== warming up"
+python -m glmup_sglang.warmup "http://127.0.0.1:$PORT" "$KEY" "$NAME"
 echo "$(hostname) $PORT $SLURM_JOB_ID" > "$STATE/endpoint"
 echo "== ready"
 

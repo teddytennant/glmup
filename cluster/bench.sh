@@ -18,6 +18,33 @@ for k in ("max_total_num_tokens", "max_running_requests", "context_length", "max
     print(k, v)
 '
 
+if [ "${GLMUP_PROFILE:-0}" = 1 ]; then
+  # profile pure decode: start 32 long requests, let their prefill finish, then trace
+  dir=$GLMUP_ROOT/logs/trace-${SLURM_JOB_ID:-x}-decode32
+  rm -rf "$dir"; mkdir -p "$dir"
+  python - "$URL" "$KEY" "$NAME" "$dir" <<'PY'
+import json, sys, threading, time, urllib.request
+url, key, name, out = sys.argv[1:5]
+hdr = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+def post(path, body, timeout=900):
+    req = urllib.request.Request(f"{url}{path}", json.dumps(body).encode(), hdr)
+    return urllib.request.urlopen(req, timeout=timeout).read().decode()
+def one(i):
+    post("/v1/completions", {"model": name, "prompt": f"{i} " + "count " * 200, "max_tokens": 600, "ignore_eos": True})
+threads = [threading.Thread(target=one, args=(i,)) for i in range(32)]
+t0 = time.time()
+for t in threads: t.start()
+time.sleep(20)
+print("start_profile:", post("/start_profile", {"output_dir": out, "num_steps": 10, "activities": ["GPU", "CPU"]})[:200])
+for t in threads: t.join()
+print(f"32 x 600 tokens done in {time.time() - t0:.1f}s")
+PY
+  sleep 5
+  echo "== trace: decode at 32 streams"
+  python -m glmup_sglang.trace_summary "$dir" 25
+  grep "Decode batch" "$GLMUP_ROOT/logs/serve-${SLURM_JOB_ID:-x}.log" | tail -5
+fi
+
 echo "== chat smoke"
 curl -s -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' "$URL/v1/chat/completions" -d "{
   \"model\": \"$NAME\", \"max_tokens\": 2048,

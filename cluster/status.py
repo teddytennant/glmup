@@ -82,7 +82,8 @@ def metrics(base, key):
             continue
         name = line.split("{")[0].split(" ")[0]
         if name in want:
-            out[want[name]] = out.get(want[name], 0) + float(line.rsplit(" ", 1)[1])
+            # every TP rank reports the same gauge; summing would double it
+            out[want[name]] = max(out.get(want[name], 0.0), float(line.rsplit(" ", 1)[1]))
     return out
 
 
@@ -113,7 +114,8 @@ if j and j["state"] == "RUNNING":
             base = f"http://{node}:{port}"
             out["endpoint"] = {"node": node, "port": int(port), "url": base}
             try:
-                get(f"{base}/health", key)
+                # /health runs a generation and stalls under load; this does not
+                get(f"{base}/v1/models", key, timeout=10)
                 out["healthy"] = True
                 out["metrics"] = metrics(base, key)
             except Exception as e:
