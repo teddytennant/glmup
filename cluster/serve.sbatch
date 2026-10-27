@@ -52,7 +52,8 @@ if [ "${GLMUP_MTP:-0}" = 1 ]; then
   args+=(--speculative-algorithm EAGLE --speculative-num-steps 3 --speculative-eagle-topk 1 --speculative-num-draft-tokens 4)
 fi
 # shellcheck disable=SC2206
-args+=(${GLMUP_EXTRA_ARGS:-})
+# extra sglang flags: GLMUP_EXTRA_ARGS, or state/extra_args so a running keep loop picks them up
+args+=(${GLMUP_EXTRA_ARGS:-$(cat "$STATE/extra_args" 2>/dev/null)})
 
 echo "== sglang ${args[*]//$KEY/<key>}"
 python -m glmup_sglang.serve "${args[@]}" &
