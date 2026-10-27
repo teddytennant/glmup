@@ -30,6 +30,8 @@ struct Shared {
     held: AtomicUsize,
     /// pass answers through as they stream instead of buffering them whole
     live: bool,
+    /// strip per-client sampling and reasoning-effort settings
+    normalize: bool,
 }
 
 /// `observe` runs only the relay: it follows the job another `glm keep` manages
@@ -41,6 +43,7 @@ pub fn run(
     env: &[(&str, &str)],
     live: bool,
     observe: bool,
+    normalize: bool,
 ) -> Result<()> {
     let listing = serde_json::json!({
         "object": "list",
@@ -54,6 +57,7 @@ pub fn run(
         )
         .into_bytes(),
         live,
+        normalize,
         ..Default::default()
     });
     let upstream = format!("127.0.0.1:{}", remote.cfg.local_port);
@@ -163,6 +167,11 @@ fn slurm_secs(t: &str) -> u64 {
 /// to the client.
 fn relay(mut client: TcpStream, upstream: &str, shared: &Shared, hold: Duration) -> Result<()> {
     let request = read_request(&client)?;
+    let request = if shared.normalize {
+        normalize(&request)
+    } else {
+        request
+    };
     // harnesses health-check the model list with a short timeout before they
     // start; holding that through a reload would fail the trial outright
     if !shared.open.load(Ordering::SeqCst)
@@ -464,6 +473,44 @@ fn dechunk(mut body: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Drop every setting a client can use to change how the model samples or how
+/// hard it reasons, so all clients get the model's own defaults. Agent
+/// harnesses each ship their own (one asks for effort "high", another
+/// for temperature 0.6), which would otherwise make a harness comparison a
+/// comparison of sampling settings too.
+fn normalize(request: &[u8]) -> Vec<u8> {
+    let Some(at) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return request.to_vec();
+    };
+    let Ok(mut body) = serde_json::from_slice::<serde_json::Value>(&request[at + 4..]) else {
+        return request.to_vec();
+    };
+    let Some(obj) = body.as_object_mut() else {
+        return request.to_vec();
+    };
+    for key in ["temperature", "top_p", "top_k", "min_p", "reasoning_effort"] {
+        obj.remove(key);
+    }
+    for (outer, inner) in [
+        ("chat_template_kwargs", "reasoning_effort"),
+        ("reasoning", "effort"),
+        ("output_config", "effort"),
+    ] {
+        if let Some(o) = obj.get_mut(outer).and_then(|v| v.as_object_mut()) {
+            o.remove(inner);
+        }
+    }
+    let body = body.to_string();
+    let head = String::from_utf8_lossy(&request[..at]);
+    let mut out: String = head
+        .split("\r\n")
+        .filter(|l| !l.to_ascii_lowercase().starts_with("content-length:"))
+        .map(|l| format!("{l}\r\n"))
+        .collect();
+    out.push_str(&format!("Content-Length: {}\r\n\r\n{body}", body.len()));
+    out.into_bytes()
+}
+
 fn wants_stream(request: &[u8]) -> bool {
     let body = request
         .windows(4)
@@ -570,7 +617,32 @@ fn log(msg: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{complete, dechunk, wants_stream};
+    use super::{complete, dechunk, normalize, wants_stream};
+
+    #[test]
+    fn normalize_strips_sampling_and_effort() {
+        let body = r#"{"model":"m","stream":true,"temperature":0.6,"top_p":0.9,"reasoning_effort":"high","output_config":{"effort":"high","x":1},"reasoning":{"effort":"medium","summary":"auto"},"max_tokens":32000}"#;
+        let req = format!("POST /v1/messages HTTP/1.1\r\nHost: h\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        let out = String::from_utf8(normalize(req.as_bytes())).unwrap();
+        let (head, body) = out.split_once("\r\n\r\n").unwrap();
+        let v: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert!(
+            v.get("temperature").is_none()
+                && v.get("top_p").is_none()
+                && v.get("reasoning_effort").is_none()
+        );
+        assert!(v["output_config"].get("effort").is_none() && v["output_config"]["x"] == 1);
+        assert!(v["reasoning"].get("effort").is_none() && v["reasoning"]["summary"] == "auto");
+        assert_eq!(v["max_tokens"], 32000);
+        assert!(head.contains(&format!("Content-Length: {}", body.len())));
+        assert_eq!(head.matches("Content-Length").count(), 1);
+    }
+
+    #[test]
+    fn normalize_leaves_non_json_alone() {
+        let req = b"GET /v1/models HTTP/1.1\r\nHost: h\r\n\r\n";
+        assert_eq!(normalize(req), req.to_vec());
+    }
 
     #[test]
     fn dechunk_joins_the_chunks() {

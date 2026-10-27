@@ -89,6 +89,9 @@ enum Cmd {
         /// Relay only: follow the job another `glm keep` manages, never submit or tunnel
         #[arg(long)]
         observe: bool,
+        /// Strip clients' sampling and reasoning-effort settings so every client gets the model defaults
+        #[arg(long)]
+        normalize: bool,
     },
     /// Chat with the model in the terminal (waits for the server if it is still starting)
     Chat,
@@ -165,6 +168,7 @@ fn run(cli: Cli) -> Result<()> {
             hold_mins,
             live,
             observe,
+            normalize,
         } => keep::run(
             &remote,
             &bind,
@@ -172,6 +176,7 @@ fn run(cli: Cli) -> Result<()> {
             &[("GLMUP_CPUS_PER_GPU", "6"), ("GLMUP_MEM", "120G")],
             live,
             observe,
+            normalize,
         ),
         Cmd::Wizard => {
             let s = remote.status()?;
