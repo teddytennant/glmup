@@ -15,11 +15,24 @@ fn pid_file() -> PathBuf {
     Config::state_dir().join("tunnel.pid")
 }
 
+/// The live tunnel on our port, found from the processes themselves rather
+/// than trusted from the pid file: two `glm` processes opening a tunnel at the
+/// same moment leave the file naming the one that lost the port and exited.
 pub fn current() -> Option<(u32, String)> {
-    let s = fs::read_to_string(pid_file()).ok()?;
-    let (pid, target) = s.trim().split_once(' ')?;
-    let pid: u32 = pid.parse().ok()?;
-    alive(pid).then(|| (pid, target.to_string()))
+    let port = crate::config::Config::load().ok()?.local_port;
+    let marker = format!("127.0.0.1:{port}:");
+    for entry in fs::read_dir("/proc").ok()?.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
+        let Ok(cmdline) = fs::read(format!("/proc/{pid}/cmdline")) else { continue };
+        let args: Vec<String> = cmdline.split(|&b| b == 0).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+        if !args.first().is_some_and(|a| a.ends_with("ssh")) {
+            continue;
+        }
+        if let Some(target) = args.iter().find_map(|a| a.strip_prefix(&marker)) {
+            return Some((pid, target.to_string()));
+        }
+    }
+    None
 }
 
 fn alive(pid: u32) -> bool {
