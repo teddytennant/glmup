@@ -28,9 +28,20 @@ struct Shared {
     open: AtomicBool,
     inflight: AtomicUsize,
     held: AtomicUsize,
+    /// pass answers through as they stream instead of buffering them whole
+    live: bool,
 }
 
-pub fn run(remote: &Remote, binds: &[String], hold: Duration, env: &[(&str, &str)]) -> Result<()> {
+/// `observe` runs only the relay: it follows the job another `glm keep` manages
+/// and never submits or touches the tunnel.
+pub fn run(
+    remote: &Remote,
+    binds: &[String],
+    hold: Duration,
+    env: &[(&str, &str)],
+    live: bool,
+    observe: bool,
+) -> Result<()> {
     let listing = serde_json::json!({
         "object": "list",
         "data": [{"id": remote.cfg.model, "object": "model", "owned_by": "glmup"}],
@@ -42,6 +53,7 @@ pub fn run(remote: &Remote, binds: &[String], hold: Duration, env: &[(&str, &str
             listing.len()
         )
         .into_bytes(),
+        live,
         ..Default::default()
     });
     let upstream = format!("127.0.0.1:{}", remote.cfg.local_port);
@@ -66,6 +78,7 @@ pub fn run(remote: &Remote, binds: &[String], hold: Duration, env: &[(&str, &str
     let mut tick = 0u64;
     loop {
         let line = match remote.status() {
+            Ok(s) if observe => follow(&s, &shared),
             Ok(s) => control(remote, &s, &shared, env),
             Err(e) => {
                 shared.open.store(false, Ordering::SeqCst);
@@ -116,6 +129,22 @@ fn control(remote: &Remote, s: &Status, shared: &Shared, env: &[(&str, &str)]) -
                 .unwrap_or_default()
         ),
     }
+}
+
+fn follow(s: &Status, shared: &Shared) -> String {
+    let Some(job) = &s.job else {
+        shared.open.store(false, Ordering::SeqCst);
+        return "no job".into();
+    };
+    let left = slurm_secs(&job.limit).saturating_sub(slurm_secs(&job.elapsed));
+    let open = s.healthy && s.endpoint.is_some() && left > DRAIN.as_secs();
+    shared.open.store(open, Ordering::SeqCst);
+    format!(
+        "job {} {}, {}m left",
+        job.id,
+        if open { "open" } else { "closed" },
+        left / 60
+    )
 }
 
 /// "1:00:00", "28:00", "1-02:03:04" -> seconds
@@ -184,7 +213,9 @@ fn relay(mut client: TcpStream, upstream: &str, shared: &Shared, hold: Duration)
             shared.held.fetch_sub(1, Ordering::SeqCst);
         }
         shared.inflight.fetch_add(1, Ordering::SeqCst);
-        let got = if streaming {
+        let got = if streaming && shared.live {
+            fetch_live(&request, upstream, &mut client, &mut beat)
+        } else if streaming {
             fetch_with_beats(&request, upstream, &mut client, &mut beat)
         } else {
             Fetched::from(fetch(&request, upstream))
@@ -195,7 +226,10 @@ fn relay(mut client: TcpStream, upstream: &str, shared: &Shared, hold: Duration)
                 deliver(&mut client, &response, streaming);
                 return Ok(());
             }
-            Fetched::ClientGone => return Ok(()),
+            Fetched::ClientGone | Fetched::Streamed => {
+                let _ = client.shutdown(Shutdown::Write);
+                return Ok(());
+            }
             // nothing usable came back: the tunnel or server went away under us
             Fetched::Retry => std::thread::sleep(Duration::from_secs(3)),
         }
@@ -206,6 +240,8 @@ const BEAT: Duration = Duration::from_secs(15);
 
 enum Fetched {
     Whole(Vec<u8>),
+    /// already passed through to the client as it streamed
+    Streamed,
     Retry,
     ClientGone,
 }
@@ -238,6 +274,127 @@ fn fetch_with_beats(
             Ok(r) => return r.into(),
             Err(_) if !keepalive(client, beat) => return Fetched::ClientGone,
             Err(_) => {}
+        }
+    }
+}
+
+enum Piece {
+    Data(Vec<u8>),
+    /// a non-200 answer, whole
+    Failed(Vec<u8>),
+    End,
+    Broken,
+}
+
+/// Stream an answer through as it is generated. Some agents (Wizard) give up
+/// on a stream after ten minutes without a real event, which a long answer
+/// buffered whole would hit. Until the first event the request can still be
+/// retried; after it, a cut stream reaches the client as a cut stream.
+fn fetch_live(
+    request: &[u8],
+    upstream: &str,
+    client: &mut TcpStream,
+    beat: &mut Instant,
+) -> Fetched {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (request, upstream) = (request.to_vec(), upstream.to_string());
+    std::thread::spawn(move || read_pieces(&request, &upstream, &tx));
+    let mut sent_any = false;
+    // comments may only go between events, never inside one
+    let mut at_boundary = true;
+    loop {
+        match rx.recv_timeout(BEAT) {
+            Ok(Piece::Data(bytes)) => {
+                sent_any = true;
+                at_boundary = bytes.ends_with(b"\n\n");
+                *beat = Instant::now();
+                if client.write_all(&bytes).is_err() {
+                    return Fetched::ClientGone;
+                }
+            }
+            Ok(Piece::Failed(body)) => {
+                let line = String::from_utf8_lossy(&body).replace('\n', " ");
+                let _ = client.write_all(format!("event: error\ndata: {line}\n\n").as_bytes());
+                return Fetched::Streamed;
+            }
+            Ok(Piece::End) => {
+                return if sent_any {
+                    Fetched::Streamed
+                } else {
+                    Fetched::Retry
+                }
+            }
+            Ok(Piece::Broken) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return if sent_any {
+                    Fetched::Streamed
+                } else {
+                    Fetched::Retry
+                };
+            }
+            Err(_) if at_boundary && !keepalive(client, beat) => return Fetched::ClientGone,
+            Err(_) => {}
+        }
+    }
+}
+
+fn read_pieces(request: &[u8], upstream: &str, tx: &std::sync::mpsc::Sender<Piece>) {
+    let send = |p| {
+        let _ = tx.send(p);
+    };
+    let Ok(mut up) = TcpStream::connect(upstream) else {
+        return send(Piece::Broken);
+    };
+    if up.write_all(request).is_err() {
+        return send(Piece::Broken);
+    }
+    let mut r = BufReader::new(up);
+    let mut head = String::new();
+    loop {
+        let mut line = String::new();
+        match r.read_line(&mut line) {
+            Ok(0) | Err(_) => return send(Piece::Broken),
+            Ok(_) if line == "\r\n" => break,
+            Ok(_) => head.push_str(&line.to_ascii_lowercase()),
+        }
+    }
+    let status = head.split_whitespace().nth(1).unwrap_or("");
+    if status == "502" || status == "503" {
+        return send(Piece::Broken);
+    }
+    let chunked = head
+        .lines()
+        .any(|l| l.starts_with("transfer-encoding:") && l.contains("chunked"));
+    if status != "200" || !chunked {
+        let mut body = Vec::new();
+        if r.read_to_end(&mut body).is_err() {
+            return send(Piece::Broken);
+        }
+        let body = if chunked { dechunk(&body) } else { body };
+        send(if status == "200" {
+            Piece::Data(body)
+        } else {
+            Piece::Failed(body)
+        });
+        return send(Piece::End);
+    }
+    loop {
+        let mut size = String::new();
+        if r.read_line(&mut size).unwrap_or(0) == 0 {
+            return send(Piece::Broken);
+        }
+        let Ok(n) = usize::from_str_radix(size.trim().split(';').next().unwrap_or(""), 16) else {
+            return send(Piece::Broken);
+        };
+        let mut chunk = vec![0u8; n + 2];
+        if r.read_exact(&mut chunk).is_err() {
+            return send(Piece::Broken);
+        }
+        if n == 0 {
+            return send(Piece::End);
+        }
+        chunk.truncate(n);
+        if tx.send(Piece::Data(chunk)).is_err() {
+            return;
         }
     }
 }

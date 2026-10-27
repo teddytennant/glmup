@@ -83,6 +83,12 @@ enum Cmd {
         /// Longest a request waits for a server before it gets a 503
         #[arg(long, default_value_t = 90)]
         hold_mins: u64,
+        /// Stream answers through as they generate instead of buffering them whole
+        #[arg(long)]
+        live: bool,
+        /// Relay only: follow the job another `glm keep` manages, never submit or tunnel
+        #[arg(long)]
+        observe: bool,
     },
     /// Chat with the model in the terminal (waits for the server if it is still starting)
     Chat,
@@ -154,11 +160,18 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Cmd::Chat => chat::run(&remote),
-        Cmd::Keep { bind, hold_mins } => keep::run(
+        Cmd::Keep {
+            bind,
+            hold_mins,
+            live,
+            observe,
+        } => keep::run(
             &remote,
             &bind,
             Duration::from_secs(hold_mins * 60),
             &[("GLMUP_CPUS_PER_GPU", "6"), ("GLMUP_MEM", "120G")],
+            live,
+            observe,
         ),
         Cmd::Wizard => {
             let s = remote.status()?;
@@ -434,7 +447,10 @@ fn print_status(cfg: &Config, s: &Status) {
         // a card held back by heat runs well under its max clock under load and
         // slows its tensor-parallel partner to match
         let throttled = g.sm_max_mhz > 0.0 && g.util > 50.0 && g.sm_mhz < 0.8 * g.sm_max_mhz;
-        let clock = format!("{:>4.0}/{:.0} MHz {:>2.0}°C", g.sm_mhz, g.sm_max_mhz, g.temp_c);
+        let clock = format!(
+            "{:>4.0}/{:.0} MHz {:>2.0}°C",
+            g.sm_mhz, g.sm_max_mhz, g.temp_c
+        );
         println!(
             "{} {} {:>3.0}% util  {:>6.1}/{:.0} GiB  {:>4.0} W  {}",
             style("gpu").bold(),
@@ -443,7 +459,11 @@ fn print_status(cfg: &Config, s: &Status) {
             g.mem_used_mib / 1024.0,
             g.mem_total_mib / 1024.0,
             g.power_w,
-            if throttled { style(format!("{clock} throttled")).red().to_string() } else { clock }
+            if throttled {
+                style(format!("{clock} throttled")).red().to_string()
+            } else {
+                clock
+            }
         );
     }
     match (&s.endpoint, s.healthy) {

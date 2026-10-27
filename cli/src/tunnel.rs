@@ -22,9 +22,16 @@ pub fn current() -> Option<(u32, String)> {
     let port = crate::config::Config::load().ok()?.local_port;
     let marker = format!("127.0.0.1:{port}:");
     for entry in fs::read_dir("/proc").ok()?.flatten() {
-        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
-        let Ok(cmdline) = fs::read(format!("/proc/{pid}/cmdline")) else { continue };
-        let args: Vec<String> = cmdline.split(|&b| b == 0).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(cmdline) = fs::read(format!("/proc/{pid}/cmdline")) else {
+            continue;
+        };
+        let args: Vec<String> = cmdline
+            .split(|&b| b == 0)
+            .map(|a| String::from_utf8_lossy(a).into_owned())
+            .collect();
         if !args.first().is_some_and(|a| a.ends_with("ssh")) {
             continue;
         }
