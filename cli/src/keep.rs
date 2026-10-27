@@ -116,6 +116,12 @@ fn relay(mut client: TcpStream, upstream: &str, shared: &Shared, hold: Duration)
                 held = true;
                 shared.held.fetch_add(1, Ordering::SeqCst);
             }
+            // agents with short timeouts give up and retry; sending the abandoned
+            // copy later would spend GPU time on an answer nobody reads
+            if client_gone(&client) {
+                shared.held.fetch_sub(1, Ordering::SeqCst);
+                return Ok(());
+            }
             if started.elapsed() > hold {
                 shared.held.fetch_sub(1, Ordering::SeqCst);
                 client.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")?;
@@ -137,6 +143,20 @@ fn relay(mut client: TcpStream, upstream: &str, shared: &Shared, hold: Duration)
         // nothing came back: the tunnel or server went away under us
         std::thread::sleep(Duration::from_secs(3));
     }
+}
+
+fn client_gone(client: &TcpStream) -> bool {
+    if client.set_nonblocking(true).is_err() {
+        return true;
+    }
+    let mut b = [0u8; 1];
+    let gone = match client.peek(&mut b) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(e) => e.kind() != std::io::ErrorKind::WouldBlock,
+    };
+    let _ = client.set_nonblocking(false);
+    gone
 }
 
 /// True once any response byte reached the client; after that a broken stream
