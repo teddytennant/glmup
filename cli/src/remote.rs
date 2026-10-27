@@ -53,6 +53,12 @@ pub struct Gpu {
     pub mem_used_mib: f64,
     pub mem_total_mib: f64,
     pub power_w: f64,
+    #[serde(default)]
+    pub temp_c: f64,
+    #[serde(default)]
+    pub sm_mhz: f64,
+    #[serde(default)]
+    pub sm_max_mhz: f64,
 }
 
 #[derive(Debug, Deserialize)]

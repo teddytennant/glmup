@@ -89,13 +89,15 @@ def metrics(base, key):
 
 def gpus(jid):
     q = sh("srun", "--overlap", f"--jobid={jid}", "-t", "1", "nvidia-smi",
-           "--query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw", "--format=csv,noheader,nounits", timeout=30)
+           "--query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu,clocks.sm,clocks.max.sm",
+           "--format=csv,noheader,nounits", timeout=30)
     rows = []
     for line in q.splitlines():
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) == 5 and parts[0].isdigit():
+        if len(parts) == 8 and parts[0].isdigit():
             rows.append({"index": int(parts[0]), "util": float(parts[1]), "mem_used_mib": float(parts[2]),
-                         "mem_total_mib": float(parts[3]), "power_w": float(parts[4])})
+                         "mem_total_mib": float(parts[3]), "power_w": float(parts[4]), "temp_c": float(parts[5]),
+                         "sm_mhz": float(parts[6]), "sm_max_mhz": float(parts[7])})
     return rows
 
 

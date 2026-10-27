@@ -93,7 +93,10 @@ up() {
     part=$SHORT_PARTITION
   fi
   mkdir -p "$LOGS"
-  sbatch --parsable -p "$part" "${account[@]}" -t "$((hours * 60))" \
+  # nodes to avoid (a GPU stuck in thermal slowdown drags its TP partner down
+  # with it): GLMUP_EXCLUDE, or one per line in state/exclude
+  local exclude=${GLMUP_EXCLUDE:-$(paste -sd, "$GLMUP_ROOT/state/exclude" 2>/dev/null)}
+  sbatch --parsable -p "$part" "${account[@]}" -t "$((hours * 60))" ${exclude:+--exclude="$exclude"} \
     --cpus-per-gpu="${GLMUP_CPUS_PER_GPU:-4}" --mem="${GLMUP_MEM:-160G}" \
     -o "$LOGS/serve-%j.log" --export=ALL,GLMUP_ROOT="$GLMUP_ROOT" \
     "$GLMUP_ROOT/src/cluster/serve.sbatch"
