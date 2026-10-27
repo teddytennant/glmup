@@ -20,9 +20,15 @@ pub fn run(remote: &Remote) -> Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
     // only fires while a reply streams; at the prompt rustyline owns ctrl-c
-    ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst)).context("installing ctrl-c handler")?;
+    ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst))
+        .context("installing ctrl-c handler")?;
 
-    println!("{} {} at {}", style("chat").green().bold(), cfg.model, cfg.local_url());
+    println!(
+        "{} {} at {}",
+        style("chat").green().bold(),
+        cfg.model,
+        cfg.local_url()
+    );
     println!("{}", style(HELP).dim());
     let mut rl = rustyline::DefaultEditor::new()?;
     let history = Config::state_dir().join("chat_history");
@@ -45,7 +51,10 @@ pub fn run(remote: &Remote) -> Result<()> {
             continue;
         }
         let _ = rl.add_history_entry(line);
-        match line.split_once(' ').map_or((line, ""), |(c, r)| (c, r.trim())) {
+        match line
+            .split_once(' ')
+            .map_or((line, ""), |(c, r)| (c, r.trim()))
+        {
             ("/exit" | "/quit", _) => break,
             ("/help", _) => {
                 println!("{}", style(HELP).dim());
@@ -66,7 +75,15 @@ pub fn run(remote: &Remote) -> Result<()> {
             ("/system", text) => {
                 system = (!text.is_empty()).then(|| text.to_string());
                 messages.clear();
-                println!("{}", style(if system.is_some() { "system prompt set, new conversation" } else { "system prompt cleared" }).dim());
+                println!(
+                    "{}",
+                    style(if system.is_some() {
+                        "system prompt set, new conversation"
+                    } else {
+                        "system prompt cleared"
+                    })
+                    .dim()
+                );
                 continue;
             }
             _ => {}
@@ -111,7 +128,15 @@ fn wait_for_server(remote: &Remote) -> Result<String> {
             "PENDING" => format!("job {} queued ({})", job.id, job.reason),
             _ => match s.load_pct.filter(|p| *p < 100) {
                 Some(p) => format!("loading weights {p}%"),
-                None => format!("server starting: {}", s.log_last.as_deref().unwrap_or("").chars().take(80).collect::<String>()),
+                None => format!(
+                    "server starting: {}",
+                    s.log_last
+                        .as_deref()
+                        .unwrap_or("")
+                        .chars()
+                        .take(80)
+                        .collect::<String>()
+                ),
             },
         };
         pb.set_message(format!("waiting for the server · {what}"));
@@ -119,7 +144,13 @@ fn wait_for_server(remote: &Remote) -> Result<String> {
     }
 }
 
-fn stream(cfg: &Config, key: &str, messages: Vec<Value>, effort: &str, stop: &AtomicBool) -> Result<String> {
+fn stream(
+    cfg: &Config,
+    key: &str,
+    messages: Vec<Value>,
+    effort: &str,
+    stop: &AtomicBool,
+) -> Result<String> {
     let req = json!({
         "model": cfg.model,
         "messages": messages,
@@ -145,7 +176,9 @@ fn stream(cfg: &Config, key: &str, messages: Vec<Value>, effort: &str, stop: &At
             break;
         }
         let line = line?;
-        let Some(data) = line.strip_prefix("data: ") else { continue };
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
         if data == "[DONE]" {
             break;
         }
@@ -154,7 +187,10 @@ fn stream(cfg: &Config, key: &str, messages: Vec<Value>, effort: &str, stop: &At
             tokens = n;
         }
         let delta = &v["choices"][0]["delta"];
-        if let Some(r) = delta["reasoning_content"].as_str().filter(|s| !s.is_empty()) {
+        if let Some(r) = delta["reasoning_content"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+        {
             first.get_or_insert(started.elapsed());
             if !in_reasoning {
                 in_reasoning = true;
@@ -177,7 +213,18 @@ fn stream(cfg: &Config, key: &str, messages: Vec<Value>, effort: &str, stop: &At
     let total = started.elapsed();
     let ttft = first.unwrap_or(total);
     let gen = (total - ttft).as_secs_f64();
-    let rate = if tokens > 0 && gen > 0.0 { format!(" · {:.0} tok/s", tokens as f64 / gen) } else { String::new() };
-    println!("\n{}", style(format!("{tokens} tokens · first token {:.2}s{rate}", ttft.as_secs_f64())).dim());
+    let rate = if tokens > 0 && gen > 0.0 {
+        format!(" · {:.0} tok/s", tokens as f64 / gen)
+    } else {
+        String::new()
+    };
+    println!(
+        "\n{}",
+        style(format!(
+            "{tokens} tokens · first token {:.2}s{rate}",
+            ttft.as_secs_f64()
+        ))
+        .dim()
+    );
     Ok(reply)
 }

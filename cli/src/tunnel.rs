@@ -54,7 +54,10 @@ pub fn ensure(remote: &Remote, ep: &Endpoint) -> Result<u32> {
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(250));
         if !alive(pid) {
-            bail!("tunnel exited; is 127.0.0.1:{} already in use?", cfg.local_port);
+            bail!(
+                "tunnel exited; is 127.0.0.1:{} already in use?",
+                cfg.local_port
+            );
         }
         if std::net::TcpStream::connect(("127.0.0.1", cfg.local_port)).is_ok() {
             return Ok(pid);

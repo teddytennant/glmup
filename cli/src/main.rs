@@ -19,7 +19,11 @@ use remote::{Remote, Status};
 ///
 /// `glmup` is the same binary and means `glm up`.
 #[derive(Parser)]
-#[command(name = "glm", version, after_help = "Config: ~/.config/glmup/config.toml (host, root, account, partition, local_port, model, wizard_provider)")]
+#[command(
+    name = "glm",
+    version,
+    after_help = "Config: ~/.config/glmup/config.toml (host, root, account, partition, local_port, model, wizard_provider)"
+)]
 struct Cli {
     /// Print the ssh commands and the raw status JSON
     #[arg(short, long, global = true)]
@@ -70,7 +74,11 @@ enum Cmd {
     /// Keep a job running back to back and relay requests through the reloads
     Keep {
         /// Relay listen addresses (the docker bridge lets containers reach it)
-        #[arg(long, value_delimiter = ',', default_value = "127.0.0.1:30001,172.17.0.1:30001")]
+        #[arg(
+            long,
+            value_delimiter = ',',
+            default_value = "127.0.0.1:30001,172.17.0.1:30001"
+        )]
         bind: Vec<String>,
         /// Longest a request waits for a server before it gets a 503
         #[arg(long, default_value_t = 90)]
@@ -89,7 +97,12 @@ fn main() {
         }
     }
     let invoked_as_glmup = args[0].rsplit('/').next() == Some("glmup");
-    if invoked_as_glmup && !args.iter().skip(1).any(|a| !a.starts_with('-') || a == "--help" || a == "-h") {
+    if invoked_as_glmup
+        && !args
+            .iter()
+            .skip(1)
+            .any(|a| !a.starts_with('-') || a == "--help" || a == "-h")
+    {
         args.insert(1, "up".into());
     }
     let cli = Cli::parse_from(args);
@@ -101,7 +114,10 @@ fn main() {
 
 fn run(cli: Cli) -> Result<()> {
     let cfg = Config::load()?;
-    let remote = Remote { cfg: &cfg, verbose: cli.verbose };
+    let remote = Remote {
+        cfg: &cfg,
+        verbose: cli.verbose,
+    };
     match cli.cmd.unwrap_or(Cmd::Status) {
         Cmd::Up { hours, mtp, detach } => up(&remote, hours, mtp, detach),
         Cmd::Off => off(&remote),
@@ -114,23 +130,45 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Logs { n, follow } => logs(&remote, n, follow),
         Cmd::Tunnel { stop } => {
             if stop {
-                println!("{}", if tunnel::stop() { "tunnel closed" } else { "no tunnel open" });
+                println!(
+                    "{}",
+                    if tunnel::stop() {
+                        "tunnel closed"
+                    } else {
+                        "no tunnel open"
+                    }
+                );
                 return Ok(());
             }
             let s = remote.status()?;
-            let Some(ep) = s.endpoint.as_ref() else { bail!("no running server to tunnel to") };
+            let Some(ep) = s.endpoint.as_ref() else {
+                bail!("no running server to tunnel to")
+            };
             tunnel::ensure(&remote, ep)?;
-            println!("tunnel open: {} -> {}:{}", cfg.local_url(), ep.node, ep.port);
+            println!(
+                "tunnel open: {} -> {}:{}",
+                cfg.local_url(),
+                ep.node,
+                ep.port
+            );
             Ok(())
         }
         Cmd::Chat => chat::run(&remote),
-        Cmd::Keep { bind, hold_mins } => {
-            keep::run(&remote, &bind, Duration::from_secs(hold_mins * 60), &[("GLMUP_CPUS_PER_GPU", "6"), ("GLMUP_MEM", "120G")])
-        }
+        Cmd::Keep { bind, hold_mins } => keep::run(
+            &remote,
+            &bind,
+            Duration::from_secs(hold_mins * 60),
+            &[("GLMUP_CPUS_PER_GPU", "6"), ("GLMUP_MEM", "120G")],
+        ),
         Cmd::Wizard => {
             let s = remote.status()?;
             let path = wizard::configure(&cfg, &s.api_key)?;
-            println!("wizard provider `{}` -> {} ({})", cfg.wizard_provider, cfg.local_url(), path.display());
+            println!(
+                "wizard provider `{}` -> {} ({})",
+                cfg.wizard_provider,
+                cfg.local_url(),
+                path.display()
+            );
             Ok(())
         }
     }
@@ -138,7 +176,9 @@ fn run(cli: Cli) -> Result<()> {
 
 pub(crate) fn spinner() -> ProgressBar {
     let pb = ProgressBar::new_spinner();
-    pb.set_style(ProgressStyle::with_template("{spinner:.cyan} {elapsed_precise:.dim} {wide_msg}").unwrap());
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.cyan} {elapsed_precise:.dim} {wide_msg}").unwrap(),
+    );
     pb.enable_steady_tick(Duration::from_millis(100));
     pb
 }
@@ -147,12 +187,19 @@ fn up(remote: &Remote, hours: u32, mtp: bool, detach: bool) -> Result<()> {
     let cfg = remote.cfg;
     let env: &[(&str, &str)] = if mtp { &[("GLMUP_MTP", "1")] } else { &[] };
     let id = remote.run(&format!("up {hours}"), env)?;
-    println!("{} job {id} ({hours}h walltime{})", style("submitted").green(), if mtp { ", MTP on" } else { "" });
+    println!(
+        "{} job {id} ({hours}h walltime{})",
+        style("submitted").green(),
+        if mtp { ", MTP on" } else { "" }
+    );
     if detach {
         println!("check on it with `glm status`");
         return Ok(());
     }
-    println!("{}", style("ctrl-c stops watching; the job keeps going (`glm off` cancels it)").dim());
+    println!(
+        "{}",
+        style("ctrl-c stops watching; the job keeps going (`glm off` cancels it)").dim()
+    );
 
     let pb = spinner();
     let mut loading: Option<ProgressBar> = None;
@@ -169,7 +216,11 @@ fn up(remote: &Remote, hours: u32, mtp: bool, detach: bool) -> Result<()> {
         }
         match job.state.as_str() {
             "PENDING" => {
-                let start = job.start.as_deref().map(|t| format!(" · est. start {t}")).unwrap_or_default();
+                let start = job
+                    .start
+                    .as_deref()
+                    .map(|t| format!(" · est. start {t}"))
+                    .unwrap_or_default();
                 pb.set_message(format!(
                     "queued ({}) · {}/{} H200 free · {} jobs waiting{start}",
                     job.reason, s.cluster.gpus_free, s.cluster.gpus_total, s.cluster.pending_jobs
@@ -181,7 +232,12 @@ fn up(remote: &Remote, hours: u32, mtp: bool, detach: bool) -> Result<()> {
                     let bar = loading.get_or_insert_with(|| {
                         pb.set_message(format!("loading weights on {node}"));
                         let b = ProgressBar::new(100);
-                        b.set_style(ProgressStyle::with_template("  {bar:40.cyan/blue} {pos:>3}% safetensors shards").unwrap());
+                        b.set_style(
+                            ProgressStyle::with_template(
+                                "  {bar:40.cyan/blue} {pos:>3}% safetensors shards",
+                            )
+                            .unwrap(),
+                        );
                         b
                     });
                     bar.set_position(pct as u64);
@@ -190,30 +246,52 @@ fn up(remote: &Remote, hours: u32, mtp: bool, detach: bool) -> Result<()> {
                         b.finish_and_clear();
                     }
                     let last = s.log_last.as_deref().unwrap_or("starting");
-                    pb.set_message(format!("{} on {node}: {}", job.state.to_lowercase(), trim(last, 90)));
+                    pb.set_message(format!(
+                        "{} on {node}: {}",
+                        job.state.to_lowercase(),
+                        trim(last, 90)
+                    ));
                 }
             }
         }
-        std::thread::sleep(Duration::from_secs(if job.state == "PENDING" { 15 } else { 5 }));
+        std::thread::sleep(Duration::from_secs(if job.state == "PENDING" {
+            15
+        } else {
+            5
+        }));
     };
     if let Some(b) = loading.take() {
         b.finish_and_clear();
     }
     pb.finish_and_clear();
-    println!("{} after {}", style("serving").green().bold(), human(started.elapsed()));
+    println!(
+        "{} after {}",
+        style("serving").green().bold(),
+        human(started.elapsed())
+    );
 
-    let ep = status.endpoint.as_ref().expect("healthy implies an endpoint");
+    let ep = status
+        .endpoint
+        .as_ref()
+        .expect("healthy implies an endpoint");
     tunnel::ensure(remote, ep)?;
     check_local(cfg, &status.api_key)?;
     let path = wizard::configure(cfg, &status.api_key)?;
-    println!("{} provider `{}` updated ({})", style("wizard").green(), cfg.wizard_provider, path.display());
+    println!(
+        "{} provider `{}` updated ({})",
+        style("wizard").green(),
+        cfg.wizard_provider,
+        path.display()
+    );
     print_creds(cfg, &status.api_key);
     Ok(())
 }
 
 fn check_local(cfg: &Config, key: &str) -> Result<()> {
     let url = format!("http://127.0.0.1:{}/health", cfg.local_port);
-    ureq::get(&url).header("Authorization", &format!("Bearer {key}")).call()?;
+    ureq::get(&url)
+        .header("Authorization", &format!("Bearer {key}"))
+        .call()?;
     Ok(())
 }
 
@@ -223,7 +301,11 @@ fn off(remote: &Remote) -> Result<()> {
     println!(
         "{} {}{}",
         style("cancelled").yellow(),
-        if ids == "none" { "nothing was running".into() } else { format!("job {ids}") },
+        if ids == "none" {
+            "nothing was running".into()
+        } else {
+            format!("job {ids}")
+        },
         if closed { ", tunnel closed" } else { "" }
     );
     Ok(())
@@ -243,7 +325,10 @@ fn creds(remote: &Remote, json: bool) -> Result<()> {
     } else {
         print_creds(cfg, &s.api_key);
         if s.endpoint.is_none() {
-            println!("{}", style("(no server running right now; `glm up` starts one)").dim());
+            println!(
+                "{}",
+                style("(no server running right now; `glm up` starts one)").dim()
+            );
         }
     }
     Ok(())
@@ -275,9 +360,21 @@ fn logs(remote: &Remote, n: u32, follow: bool) -> Result<()> {
     loop {
         let out = remote.run("logs 200", &[])?;
         // print only what came after the last line we already showed
-        let fresh = match seen.lines().last().and_then(|l| out.rfind(l).map(|i| &out[i + l.len()..])) {
+        let fresh = match seen
+            .lines()
+            .last()
+            .and_then(|l| out.rfind(l).map(|i| &out[i + l.len()..]))
+        {
             Some(rest) => rest.trim_start_matches('\n').to_string(),
-            None => out.lines().rev().take(n as usize).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"),
+            None => out
+                .lines()
+                .rev()
+                .take(n as usize)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n"),
         };
         if !fresh.is_empty() {
             println!("{fresh}");
@@ -315,10 +412,20 @@ fn print_status(cfg: &Config, s: &Status) {
         state,
         job.elapsed,
         job.limit,
-        job.node.as_deref().map(|n| format!(" · {n}")).unwrap_or_default()
+        job.node
+            .as_deref()
+            .map(|n| format!(" · {n}"))
+            .unwrap_or_default()
     );
     if job.state == "PENDING" {
-        println!("    reason {}{}", job.reason, job.start.as_deref().map(|t| format!(", est. start {t}")).unwrap_or_default());
+        println!(
+            "    reason {}{}",
+            job.reason,
+            job.start
+                .as_deref()
+                .map(|t| format!(", est. start {t}"))
+                .unwrap_or_default()
+        );
     }
     if let Some(pct) = s.load_pct.filter(|p| *p < 100 && !s.healthy) {
         println!("    loading weights {pct}%");
@@ -336,16 +443,25 @@ fn print_status(cfg: &Config, s: &Status) {
     }
     match (&s.endpoint, s.healthy) {
         (Some(ep), true) => {
-            println!("{} healthy at {}:{}", style("server").bold(), ep.node, ep.port);
+            println!(
+                "{} healthy at {}:{}",
+                style("server").bold(),
+                ep.node,
+                ep.port
+            );
             if let Some(m) = &s.metrics {
                 let f = |v: Option<f64>| v.map(|x| format!("{x:.0}")).unwrap_or("-".into());
                 println!(
                     "    {} running, {} queued, kv {}, {} tok/s generated, prefix cache hit {}",
                     f(m.running),
                     f(m.queued),
-                    m.kv_usage.map(|x| format!("{:.1}%", x * 100.0)).unwrap_or("-".into()),
+                    m.kv_usage
+                        .map(|x| format!("{:.1}%", x * 100.0))
+                        .unwrap_or("-".into()),
                     f(m.gen_tok_s),
-                    m.cache_hit_rate.map(|x| format!("{:.0}%", x * 100.0)).unwrap_or("-".into())
+                    m.cache_hit_rate
+                        .map(|x| format!("{:.0}%", x * 100.0))
+                        .unwrap_or("-".into())
                 );
                 if let Some(cap) = m.kv_capacity_tokens {
                     println!("    kv pool {cap:.0} tokens");
@@ -364,7 +480,11 @@ fn print_status(cfg: &Config, s: &Status) {
         }
     }
     match tunnel::current() {
-        Some((pid, target)) => println!("{} {} -> {target} (pid {pid})", style("tunnel").bold(), cfg.local_url()),
+        Some((pid, target)) => println!(
+            "{} {} -> {target} (pid {pid})",
+            style("tunnel").bold(),
+            cfg.local_url()
+        ),
         None if s.healthy => println!("{} closed (`glm tunnel` opens it)", style("tunnel").bold()),
         None => {}
     }

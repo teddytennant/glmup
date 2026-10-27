@@ -17,7 +17,9 @@ pub fn configure(cfg: &Config, key: &str) -> Result<PathBuf> {
     let dir = wizard_dir();
     let path = dir.join("config.toml");
     let text = fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: DocumentMut = text.parse().with_context(|| format!("parsing {}", path.display()))?;
+    let mut doc: DocumentMut = text
+        .parse()
+        .with_context(|| format!("parsing {}", path.display()))?;
 
     if !doc.contains_key("providers") {
         doc.insert("providers", Item::ArrayOfTables(ArrayOfTables::new()));
@@ -45,7 +47,9 @@ pub fn configure(cfg: &Config, key: &str) -> Result<PathBuf> {
 
     let cred_path = dir.join("credentials.toml");
     let cred_text = fs::read_to_string(&cred_path).unwrap_or_default();
-    let mut creds: DocumentMut = cred_text.parse().with_context(|| format!("parsing {}", cred_path.display()))?;
+    let mut creds: DocumentMut = cred_text
+        .parse()
+        .with_context(|| format!("parsing {}", cred_path.display()))?;
     if !creds.contains_key("keys") {
         creds.insert("keys", Item::Table(Table::new()));
     }

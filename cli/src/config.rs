@@ -18,7 +18,9 @@ impl Config {
     pub fn load() -> Result<Self> {
         let path = Self::path();
         let doc: DocumentMut = match std::fs::read_to_string(&path) {
-            Ok(s) => s.parse().with_context(|| format!("parsing {}", path.display()))?,
+            Ok(s) => s
+                .parse()
+                .with_context(|| format!("parsing {}", path.display()))?,
             Err(_) => DocumentMut::new(),
         };
         let get = |key: &str, env: &str, default: &str| -> String {
@@ -30,7 +32,11 @@ impl Config {
         let local_port = std::env::var("GLMUP_LOCAL_PORT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .or_else(|| doc.get("local_port").and_then(|v| v.as_integer()).map(|v| v as u16))
+            .or_else(|| {
+                doc.get("local_port")
+                    .and_then(|v| v.as_integer())
+                    .map(|v| v as u16)
+            })
             .unwrap_or(30000);
         Ok(Self {
             host: get("host", "GLMUP_HOST", "ncshare"),
@@ -44,7 +50,9 @@ impl Config {
     }
 
     pub fn path() -> PathBuf {
-        dirs::config_dir().unwrap_or_default().join("glmup/config.toml")
+        dirs::config_dir()
+            .unwrap_or_default()
+            .join("glmup/config.toml")
     }
 
     pub fn state_dir() -> PathBuf {

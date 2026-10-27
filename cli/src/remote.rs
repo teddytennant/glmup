@@ -77,7 +77,14 @@ impl Remote<'_> {
     /// master and exits, leaving nothing to track or kill.
     pub fn ssh_base(&self, shared: bool) -> Command {
         let mut c = Command::new("ssh");
-        c.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15"]);
+        c.args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=15",
+            "-o",
+            "ServerAliveInterval=15",
+        ]);
         if shared {
             let sock = Config::state_dir().join("ssh-%r@%h:%p");
             c.args(["-o", "ControlMaster=auto", "-o", "ControlPersist=10m"])
@@ -106,7 +113,12 @@ impl Remote<'_> {
         // the login node drops connections now and then; one retry covers it
         let mut last = String::new();
         for _ in 0..2 {
-            let out = self.ssh_base(true).arg(&cfg.host).arg(&line).output().context("running ssh")?;
+            let out = self
+                .ssh_base(true)
+                .arg(&cfg.host)
+                .arg(&line)
+                .output()
+                .context("running ssh")?;
             if out.status.success() {
                 let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if self.verbose {
