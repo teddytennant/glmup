@@ -4,7 +4,8 @@
 //! a long workload sees the server vanish for the 20-40 minutes the next job
 //! spends loading. The relay holds requests through that gap instead of
 //! failing them, and stops sending new ones a few minutes before a job's
-//! walltime so the ones in flight can finish.
+//! walltime so the ones in flight can finish. Answers are buffered and only
+//! handed on whole, so one cut off by a walltime is resent rather than lost.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -159,31 +160,49 @@ fn client_gone(client: &TcpStream) -> bool {
     gone
 }
 
-/// True once any response byte reached the client; after that a broken stream
-/// is the client's to retry, never ours.
+/// Send one request and pass the answer on only once it is complete.
+///
+/// A stream cut by a job's walltime would otherwise reach the agent half
+/// written, and most harnesses treat that as fatal. Buffering makes every
+/// request all or nothing, so a cut one is simply sent again to the next job.
+/// The agents run headless, so token streaming buys them nothing.
+/// False means retry: nothing usable came back.
 fn forward(request: &[u8], client: &mut TcpStream, upstream: &str) -> bool {
     let Ok(mut up) = TcpStream::connect(upstream) else { return false };
     if up.write_all(request).is_err() {
         return false;
     }
-    let mut buf = [0u8; 16384];
-    let mut any = false;
-    loop {
-        let n = match up.read(&mut buf) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => n,
-        };
-        // a 502 from a half-open tunnel would otherwise go straight to the agent
-        if !any && buf[..n].starts_with(b"HTTP/1.1 502") {
-            return false;
+    let mut response = Vec::new();
+    let _ = up.read_to_end(&mut response);
+    if !complete(&response) {
+        return false;
+    }
+    let _ = client.write_all(&response);
+    let _ = client.shutdown(Shutdown::Write);
+    true
+}
+
+/// Whether `response` is a whole HTTP/1.1 response worth handing to a client:
+/// a body as long as its Content-Length, or chunked with the final chunk, and
+/// not a 502/503 from a server or tunnel that is going away.
+fn complete(response: &[u8]) -> bool {
+    let Some(split) = response.windows(4).position(|w| w == b"\r\n\r\n") else { return false };
+    let head = String::from_utf8_lossy(&response[..split]).to_ascii_lowercase();
+    let body = &response[split + 4..];
+    let status = head.split_whitespace().nth(1).unwrap_or("");
+    if status == "502" || status == "503" {
+        return false;
+    }
+    for line in head.lines() {
+        if let Some(v) = line.strip_prefix("content-length:") {
+            return v.trim().parse::<usize>().is_ok_and(|n| body.len() >= n);
         }
-        any = true;
-        if client.write_all(&buf[..n]).is_err() {
-            break;
+        if line.starts_with("transfer-encoding:") && line.contains("chunked") {
+            return body.ends_with(b"0\r\n\r\n");
         }
     }
-    let _ = client.shutdown(Shutdown::Write);
-    any
+    // no framing: the server's close marks the end
+    true
 }
 
 /// Request head plus body, with the connection forced to close after one exchange.
@@ -239,4 +258,30 @@ fn log(msg: &str) {
     let now = std::process::Command::new("date").arg("+%F %T").output();
     let ts = now.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     eprintln!("{ts} {msg}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::complete;
+
+    #[test]
+    fn content_length_must_be_met() {
+        assert!(complete(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+        assert!(!complete(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nok"));
+    }
+
+    #[test]
+    fn chunked_needs_the_final_chunk() {
+        let whole = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\ndata:\r\n0\r\n\r\n";
+        assert!(complete(whole));
+        assert!(!complete(&whole[..whole.len() - 5]));
+    }
+
+    #[test]
+    fn gateway_errors_and_empty_replies_are_retried() {
+        assert!(!complete(b""));
+        assert!(!complete(b"HTTP/1.1 200 OK\r\nContent-Le"));
+        assert!(!complete(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n"));
+        assert!(complete(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"));
+    }
 }
